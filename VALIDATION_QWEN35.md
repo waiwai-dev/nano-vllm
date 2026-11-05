@@ -2,7 +2,7 @@
 
 服务器：`waiwai_5090`；仓库：`/mnt/waiwai/work/Code_repo/nano-vllm`；
 基线 commit：`576772550f9379ad2eaa3897f673d5c23c523a40`。
-分支：`codex/qwen3.5-4b`。环境与运行方法见 `QWEN35.md`。
+分支：`qwen3.5-4b`。环境与运行方法见 `QWEN35.md`。
 
 ## 已通过的检查
 
