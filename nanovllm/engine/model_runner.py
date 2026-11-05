@@ -28,8 +28,14 @@ class ModelRunner:
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.dtype)
         torch.set_default_device("cuda")
-        self.model = Qwen3ForCausalLM(hf_config)
+        if config.is_hybrid:
+            from nanovllm.models.qwen3_5 import Qwen3_5ForCausalLM
+            self.model = Qwen3_5ForCausalLM(hf_config)
+        else:
+            self.model = Qwen3ForCausalLM(hf_config)
         load_model(self.model, config.model)
+        if config.is_hybrid:
+            self.model.allocate_states(config.max_num_seqs)
         self.sampler = Sampler()
         self.warmup_model()
         self.allocate_kv_cache()
@@ -95,8 +101,9 @@ class ModelRunner:
         seq_len = min(max_num_batched_tokens, max_model_len)
         num_seqs = min(max_num_batched_tokens // seq_len, self.config.max_num_seqs)
         seqs = [Sequence([0] * seq_len) for _ in range(num_seqs)]
-        for seq in seqs:
+        for i, seq in enumerate(seqs):
             seq.num_scheduled_tokens = seq_len
+            seq.state_slot = i
         self.run(seqs, True)
         torch.cuda.empty_cache()
 
@@ -109,10 +116,14 @@ class ModelRunner:
         current = torch.cuda.memory_stats()["allocated_bytes.all.current"]
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
         head_dim = getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
-        block_bytes = 2 * hf_config.num_hidden_layers * self.block_size * num_kv_heads * head_dim * hf_config.dtype.itemsize
+        num_kv_layers = hf_config.layer_types.count("full_attention") if config.is_hybrid else hf_config.num_hidden_layers
+        block_bytes = 2 * num_kv_layers * self.block_size * num_kv_heads * head_dim * hf_config.dtype.itemsize
         config.num_kvcache_blocks = int(total * config.gpu_memory_utilization - used - peak + current) // block_bytes
+        if config.is_hybrid:
+            max_blocks = config.max_num_seqs * ((config.max_model_len + self.block_size - 1) // self.block_size)
+            config.num_kvcache_blocks = min(config.num_kvcache_blocks, max_blocks)
         assert config.num_kvcache_blocks > 0
-        self.kv_cache = torch.empty(2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
+        self.kv_cache = torch.empty(2, num_kv_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
         layer_id = 0
         for module in self.model.modules():
             if hasattr(module, "k_cache") and hasattr(module, "v_cache"):
@@ -213,6 +224,16 @@ class ModelRunner:
 
     def run(self, seqs: list[Sequence], is_prefill: bool) -> list[int]:
         input_ids, positions = self.prepare_prefill(seqs) if is_prefill else self.prepare_decode(seqs)
+        if self.config.is_hybrid:
+            context = get_context()
+            context.state_slots = torch.tensor([seq.state_slot for seq in seqs], dtype=torch.int64, device="cuda")
+            offset = 0
+            spans = []
+            for seq in seqs:
+                end = offset + seq.num_scheduled_tokens
+                spans.append((offset, end, seq.num_cached_tokens == 0))
+                offset = end
+            context.state_spans = spans
         temperatures = self.prepare_sample(seqs) if self.rank == 0 else None
         logits = self.run_model(input_ids, positions, is_prefill)
         token_ids = self.sampler(logits, temperatures).tolist() if self.rank == 0 else None

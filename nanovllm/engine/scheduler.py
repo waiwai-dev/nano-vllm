@@ -12,7 +12,8 @@ class Scheduler:
         self.max_num_batched_tokens = config.max_num_batched_tokens
         self.eos = config.eos
         self.block_size = config.kvcache_block_size
-        self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size)
+        self.block_manager = BlockManager(config.num_kvcache_blocks, config.kvcache_block_size, config.enable_prefix_cache)
+        self.free_state_slots = deque(range(config.max_num_seqs)) if config.is_hybrid else None
         self.waiting: deque[Sequence] = deque()
         self.running: deque[Sequence] = deque()
 
@@ -33,6 +34,8 @@ class Scheduler:
             if remaining == 0:
                 break
             if not seq.block_table:
+                if self.free_state_slots is not None and not self.free_state_slots:
+                    break
                 num_cached_blocks = self.block_manager.can_allocate(seq)
                 if num_cached_blocks == -1:
                     break
@@ -43,6 +46,8 @@ class Scheduler:
                 break
             if not seq.block_table:
                 self.block_manager.allocate(seq, num_cached_blocks)
+                if self.free_state_slots is not None:
+                    seq.state_slot = self.free_state_slots.popleft()
             seq.num_scheduled_tokens = min(num_tokens, remaining)
             num_batched_tokens += seq.num_scheduled_tokens
             if seq.num_cached_tokens + seq.num_scheduled_tokens == seq.num_tokens:
@@ -76,7 +81,13 @@ class Scheduler:
         seq.status = SequenceStatus.WAITING
         seq.is_prefill = True
         self.block_manager.deallocate(seq)
+        self.release_state(seq)
         self.waiting.appendleft(seq)
+
+    def release_state(self, seq: Sequence):
+        if self.free_state_slots is not None and seq.state_slot != -1:
+            self.free_state_slots.append(seq.state_slot)
+            seq.state_slot = -1
 
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         for seq, token_id in zip(seqs, token_ids):
@@ -89,4 +100,5 @@ class Scheduler:
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
+                self.release_state(seq)
                 self.running.remove(seq)
