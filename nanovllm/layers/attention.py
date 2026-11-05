@@ -3,7 +3,12 @@ from torch import nn
 import triton
 import triton.language as tl
 
-from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+try:
+    from flash_attn import flash_attn_varlen_func, flash_attn_with_kvcache
+except ImportError:
+    # FA4's namespace does not expose the FA2 API; its SM120 path also lacks paged KV.
+    from nanovllm.layers.triton_attention import attention as flash_attn_varlen_func
+    from nanovllm.layers.triton_attention import attention as flash_attn_with_kvcache
 from nanovllm.utils.context import get_context
 
 

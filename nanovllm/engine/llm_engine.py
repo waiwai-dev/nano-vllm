@@ -18,6 +18,7 @@ class LLMEngine:
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
+        self.config = config
         Sequence.block_size = config.kvcache_block_size
         self.ps = []
         self.events = []
@@ -35,6 +36,8 @@ class LLMEngine:
         atexit.register(self.exit)
 
     def exit(self):
+        if not hasattr(self, "model_runner"):
+            return
         self.model_runner.call("exit")
         del self.model_runner
         for p in self.ps:
@@ -43,6 +46,10 @@ class LLMEngine:
     def add_request(self, prompt: str | list[int], sampling_params: SamplingParams):
         if isinstance(prompt, str):
             prompt = self.tokenizer.encode(prompt)
+        if not prompt:
+            raise ValueError("Prompt must contain at least one token")
+        if len(prompt) + sampling_params.max_tokens > self.config.max_model_len:
+            raise ValueError("Prompt plus max_tokens exceeds max_model_len")
         seq = Sequence(prompt, sampling_params)
         self.scheduler.add(seq)
 

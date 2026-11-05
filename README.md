@@ -43,6 +43,30 @@ outputs = llm.generate(prompts, sampling_params)
 outputs[0]["text"]
 ```
 
+## Qwen3.5-4B text inference
+
+This branch supports the dense Qwen3.5 text backbone: Gated DeltaNet, gated
+full attention, partial RoPE, zero-centered RMSNorm, and official checkpoint
+names. It runs inside Nano-vLLM with paged KV, chunked prefill, continuous
+batching, request-local recurrent/conv states, and tensor parallelism.
+
+```bash
+pip install -e '.[qwen35]'
+python example_qwen35.py --model /mnt/waiwai/models/Qwen3.5-4B
+python example_qwen35.py --model /mnt/waiwai/models/Qwen3.5-4B --tp 2
+```
+
+Qwen3.5 currently runs in eager mode with prefix caching disabled. The default
+`max_num_seqs` is 16 for hybrid models (512 for Qwen3); choose a smaller value
+to reduce the fp32 recurrent-state allocation. Vision, video, MoE, MTP, and
+hybrid CUDA graphs / prefix-state snapshots are not implemented. BF16 kernel
+rounding can change greedy tokens near ties; this is not bitwise equivalent
+to Transformers. See [QWEN35.md](QWEN35.md) for setup and validation scope.
+
+FlashAttention 2 is optional (`pip install -e '.[flash]'`). Without its API,
+the built-in Triton attention path handles dense and paged attention, including
+consumer Blackwell GPUs where FA4 paged KV is unavailable.
+
 ## Benchmark
 
 See `bench.py` for benchmark.

@@ -15,9 +15,12 @@ dependencies = [
     "torch>=2.4.0",
     "triton>=3.0.0",
     "transformers>=4.51.0",
-    "flash-attn",
     "xxhash",
 ]
+
+[project.optional-dependencies]
+qwen35 = ["transformers>=5.19.0,<6", "flash-linear-attention>=0.6.0,<0.7"]
+flash = ["flash-attn"]
 
 [project.urls]
 Homepage="https://github.com/GeeeekExplorer/nano-vllm"

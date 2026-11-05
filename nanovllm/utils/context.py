@@ -12,6 +12,8 @@ class Context:
     slot_mapping: torch.Tensor | None = None
     context_lens: torch.Tensor | None = None
     block_tables: torch.Tensor | None = None
+    state_slots: torch.Tensor | None = None
+    state_spans: list[tuple[int, int, bool]] | None = None
 
 _CONTEXT = Context()
 
